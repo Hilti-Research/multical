@@ -884,6 +884,35 @@ class CameraChainParameters(ParametersBase):
             except:
                 print >> dest, "  baseline: no data available"
                 pass
+    
+    @catch_keyerror
+    def getShouldFixLastCamToHere(self, camNr):
+        # Checks if extrinsics should be fixed w.r.t. last camera
+        # using the 'fix_last_cam_to_here' parameter
+        if camNr == 0:
+            return False
+        if camNr >= self.numCameras():
+            self.raiseError("out-of-range: baseline index not in camera chain!")
+        
+        try:
+            return self.data["cam{0}".format(camNr)]['fix_last_cam_to_here']
+        except:
+            return False
+        
+    @catch_keyerror
+    def getCameraImuOrientationPrior(self, camNr):
+        # Obtains a camera-imu orientation prior to help aligning targets between
+        # LiDAR and camera in the initialization phase
+        if camNr != 0:
+            return False
+        if camNr >= self.numCameras():
+            self.raiseError("out-of-range: baseline index not in camera chain!")
+        
+        try:
+            return self.data["cam{0}".format(camNr)]['camera_imu_orientation_prior']
+        except:
+            return False
+
 
 class LiDARListParameters(ParametersBase):
     def __init__(self, yamlFile, reference_sensor_name, createYaml=False):

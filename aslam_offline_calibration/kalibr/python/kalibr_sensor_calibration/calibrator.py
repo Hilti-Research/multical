@@ -264,7 +264,8 @@ class Calibrator(object):
             # cam-cam baselines
             if camNr > 0:
                 T_cB_cA, baseline = self.CameraChain.getResultBaseline(camNr - 1, camNr)
-                chain.setExtrinsicsLastCamToHere(camNr, T_cB_cA)
+                if None not in [T_cB_cA, baseline]:
+                    chain.setExtrinsicsLastCamToHere(camNr, T_cB_cA)
 
             # imu-cam trafos
             t_c_ref = self.CameraChain.getTransformationReferenceToCam(camNr)

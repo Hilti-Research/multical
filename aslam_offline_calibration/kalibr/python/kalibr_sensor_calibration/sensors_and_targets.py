@@ -16,6 +16,7 @@ import math
 import numpy as np
 import pylab as pl
 import scipy.optimize
+from scipy.spatial.transform import Rotation
 from copy import deepcopy
 import open3d as o3d
 import colorsys
@@ -330,7 +331,13 @@ class LiDAR:
 # mono camera
 class Camera():
     def __init__(self, camConfig, target, dataset,  isReference=False, reprojectionSigma=1.0, showCorners=True, \
-                 showReproj=True, showOneStep=False):
+                 showReproj=True, showOneStep=False, fixed_baseline_travo=None, fixed_baseline_parent=None):
+        # Handle fixed baseline
+        self.fixed_baseline_travo = fixed_baseline_travo
+        self.fixed_baseline_parent = fixed_baseline_parent
+        self.use_fixed_baseline = (fixed_baseline_parent is not None) and (fixed_baseline_travo is not None)
+        if self.use_fixed_baseline:
+            self.fixed_baseline_travo_Dv = aopt.TransformationDv(self.fixed_baseline_travo, rotationActive=False, translationActive=False)
 
         # store the configuration
         self.dataset = dataset
@@ -543,9 +550,13 @@ class Camera():
                            baselinedv_group_id=ic.HELPER_GROUP_ID):
         # Add the calibration design variables.
         active = not self.isReference
-        self.T_c_b_Dv = aopt.TransformationDv(self.init_T_c_b, rotationActive=active, translationActive=active)
-        for i in range(0, self.T_c_b_Dv.numDesignVariables()):
-            problem.addDesignVariable(self.T_c_b_Dv.getDesignVariable(i), baselinedv_group_id)
+        if not self.use_fixed_baseline:
+            self.T_c_b_Dv = aopt.TransformationDv(self.init_T_c_b, rotationActive=active, translationActive=active)
+            for i in range(0, self.T_c_b_Dv.numDesignVariables()):
+                problem.addDesignVariable(self.T_c_b_Dv.getDesignVariable(i), baselinedv_group_id)
+        else:
+            for i in range(0, self.fixed_baseline_travo_Dv.numDesignVariables()):
+                problem.addDesignVariable(self.fixed_baseline_travo_Dv.getDesignVariable(i), baselinedv_group_id)
 
         # Add the time delay design variable.
         self.cameraTimeToReferenceTimeDv = aopt.Scalar(0.0)
@@ -564,7 +575,13 @@ class Camera():
         allReprojectionErrors = list()
         error_t = self.camera.reprojectionErrorType
 
-        T_c_b = self.T_c_b_Dv.toExpression()
+        if not self.use_fixed_baseline:
+            T_c_b = self.T_c_b_Dv.toExpression()
+        else:
+            T_cm1_b = self.fixed_baseline_parent.T_c_b_Dv.toExpression()
+            T_c_cm1 = self.fixed_baseline_travo_Dv.toExpression()
+            T_c_b =  T_c_cm1 * T_cm1_b
+
         for obs in self.targetObservations:
             for obsPerTarget in obs:
                 # Build a transformation expression for the time.
@@ -652,6 +669,17 @@ class CameraChain():
             dataset = initCameraBagDataset(parsed.bagfile[0], camConfig.getRosTopic(), \
                                            parsed.bag_from_to, parsed.perform_synchronization)
 
+            fixed_baseline_travo = None
+            fixed_baseline_parent = None
+            if chainConfig.getShouldFixLastCamToHere(camNr):
+                try:
+                    fixed_baseline_travo = chainConfig.getExtrinsicsLastCamToHere(camNr)
+                    fixed_baseline_parent = self.camList[-1]
+                    print("Enforced init extrinsics for cam {}".format(camNr))
+                except Exception as e:
+                    print("Error for cam {} - asked to fix extrinsic but not available".format(camNr))
+                    print(e.message)
+
             # create the camera
             self.camList.append(Camera(camConfig,
                                        target,
@@ -661,7 +689,10 @@ class CameraChain():
                                        reprojectionSigma=parsed.reprojection_sigma,
                                        showCorners=parsed.showextraction,
                                        showReproj=parsed.showextraction,
-                                       showOneStep=parsed.extractionstepping))
+                                       showOneStep=parsed.extractionstepping,
+                                       fixed_baseline_travo=fixed_baseline_travo,
+                                       fixed_baseline_parent=fixed_baseline_parent))
+
 
         self.chainConfig = chainConfig
         self.target = target
@@ -942,6 +973,9 @@ class CameraChain():
             sm.logFatal("Failed to obtain extrinsic parameters of sensors!")
             sys.exit(-1)
 
+        q_i_c = Rotation.from_dcm(np.array(self.chainConfig.getCameraImuOrientationPrior(0)))
+        q_i_c_Dv = aopt.RotationQuaternionDv(q_i_c.as_quat())
+
         if imu:
             if imu.isReference:
                 R_c_b = q_i_c_Dv.toRotationMatrix().transpose()
@@ -996,16 +1030,28 @@ class CameraChain():
 
     # return the baseline transformation from camA to camB
     def getResultBaseline(self, fromCamANr, toCamBNr):
-
         T_cB_cA = sm.Transformation(self.camList[toCamBNr].T_c_b_Dv.T()).inverse() * \
                   sm.Transformation(self.camList[fromCamANr].T_c_b_Dv.T())
+        if not self.camList[toCamBNr].use_fixed_baseline:
+            if self.camList[fromCamANr].use_fixed_baseline:
+                return None, None
+            else: 
+                T_cB_cA = sm.Transformation(self.camList[toCamBNr].T_c_b_Dv.T()).inverse() * \
+                        sm.Transformation(self.camList[fromCamANr].T_c_b_Dv.T())
+        else:
+            T_cB_cA = self.camList[toCamBNr].fixed_baseline_travo
         # calculate the metric baseline
         baseline = np.linalg.norm(T_cB_cA.t())
 
         return T_cB_cA, baseline
 
+
     def getTransformationReferenceToCam(self, camNr):
-        return sm.Transformation(self.camList[camNr].T_c_b_Dv.T())
+        if not self.camList[camNr].use_fixed_baseline:
+            return sm.Transformation(self.camList[camNr].T_c_b_Dv.T())
+        else:
+            return self.camList[camNr].fixed_baseline_travo * sm.Transformation(self.camList[camNr-1].T_c_b_Dv.T())
+
 
 
     def getResultTimeShift(self, camNr):
