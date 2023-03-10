@@ -1,6 +1,4 @@
-# Multical
-
-## Changelog Hilti
+# Changelog Hilti
 We added two features to MultiCal to better reflect our calibration needs for our hardware setup in the [Hilti SLAM Challenge](https://hilti-challenge.com/). You can find an [example for the config used to calibrate our robot here](examples/trailblazer).
 
 ### Adding possibility to fix `T_cn_cnm1` for stereo pairs
@@ -8,6 +6,8 @@ As our sensor setup consists of multiple stereo camera pairs and the baseline of
 
 ### Adding a prior for `T_camera_imu`
 We have had difficulties with the automatic target detector using high reflectivity foil for the LiDAR. Even though we tried to manually set the extrinsic of the LiDAR w.r.t. the IMU, the automatic detection of the camera-to-imu extrinsic was still causing troubles (probably due to the fact that we were unable to properly excite all axis of our heavy robot). That's why we added the possibility to additionally provide a camera-to-imu prior through the `camera_imu_orientation_prior` parameter.
+
+# Multical
 
 **Mul**tiple **t**argets for multiple **I**MUs, **c**ameras **a**nd **L**iDARs (Lasers) spatiotemporal calibration
 ## The dataset is available [here](https://robotics.shanghaitech.edu.cn/datasets/multical)
